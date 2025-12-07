@@ -3,6 +3,7 @@ import json
 import re
 import mimetypes
 from datetime import datetime
+from time import time
 from google import genai
 from google.genai import types
 
@@ -37,6 +38,8 @@ class GeminiLLMClient:
         self.temperature = GEMINI_LLM_CONFIG.get('temperature', 0.1)
         self.model_for_stock_selection = GEMINI_LLM_CONFIG['model_for_stock_selection']
         self.model_for_stock_qty_selection = GEMINI_LLM_CONFIG['model_for_stock_qty_selection']
+        self.training_pdf_part = self._load_pdf_part("training/NSE_Training_Framework_for_AI_Models.pdf")   
+        # self.training_video_part = self._load_video_part("https://youtu.be/jvzd7UPlb5Y?si=AVjpdE7dR0uhwPBE") 
                 
         os.makedirs(JSON_REQ_RES_DIR, exist_ok=True)
 
@@ -62,32 +65,105 @@ class GeminiLLMClient:
             logger.error(f"Error loading image part: {e}")
             return None
 
-    def generate_decision(self, instrument_key: str, instrument_to_trade: str, market_data_str: str, market_intraday_data_str: str, portfolio_margin_status_str: str, portfolio_position_status_str: str, technical_summary: str, stock_news: str, previous_decision, number_of_instruments_to_trade, chart_plot_image_paths,all_positionss, leverage_on_intraday: int = 1) -> dict | None:
+    def _load_pdf_part(self, pdf_path: str):
+        """
+        Reads a local PDF and converts it into a GenAI Part object.
+        """
+        try:
+            if not os.path.exists(pdf_path):
+                logger.warning(f"PDF not found at: {pdf_path}")
+                return None
+            
+            # PDF MIME type is standard, but you can use mimetypes.guess_type if preferred
+            mime_type = "application/pdf"
+
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+
+            # Create the Part object using the same from_bytes method
+            return types.Part.from_bytes(data=pdf_bytes, mime_type=mime_type)
+            
+        except Exception as e:
+            logger.error(f"Error loading PDF part: {e}")
+            return None
+    
+    def _load_video_part(self, url_link: str):
+        """
+        Reads a Youtube Video and converts it into a GenAI Part object.
+        """
+        try:
+            return types.Part(
+                file_data=types.FileData(file_uri=url_link)
+            )
+            
+        except Exception as e:
+            logger.error(f"Error loading PDF part: {e}")
+            return None
+
+    def generate_decision_for_new_trade(self, instrument_key: str, instrument_to_trade: str, market_data_str: str, market_intraday_data_str: str, portfolio_margin_status_str: str, portfolio_position_status_str: str, technical_summary: str, stock_news: str, previous_decision, number_of_instruments_to_trade, chart_plot_image_paths,all_positionss, leverage_on_intraday: int = 1) -> dict | None:
         """
         Sends the current market and portfolio data to the LLM and gets a trading decision.
         """
         user_data_prompt = f"""
-        Here is the current trading data:
-        Stock to Trade: {instrument_to_trade}
-        Number of Stocks to Trade: {number_of_instruments_to_trade}
-        Leverage on Intraday: {AGENT_CONFIG["LEVERAGE_ON_INTRADAY"]} times  
-        Portfolio Margin: {portfolio_margin_status_str}
-        Existing Portfolio Positions: {portfolio_position_status_str} 
-        All Positions: {all_positionss}
-        Current Market Data: {market_data_str}
-        Technical Summary: {technical_summary}
-        Latest News: {stock_news}
-        Previous Decisions: {previous_decision}
-        Current Time: {datetime.now().strftime("%H:%M:%S")} IST
-        Market Close Time: {AGENT_CONFIG["MARKET_CLOSE_TIME"]} IST
-        Decision Interval: {AGENT_CONFIG["DECISION_INTERVAL_SECONDS"]} seconds
-        Risk_Percentage: {RISK_CONFIG["RISK_PERCENTAGE_FOR_SINGLE_TRADE"]}%
-        Technical Indicator Configuration : {INTRADAY_TECHNICAL_ANALYZER_CONFIG}
+        ### Trading Data Input
+
+        **Stock to Trade:** {instrument_to_trade}
+
+        **Portfolio and Risk Constraints:**
+        * Leverage on Intraday: {AGENT_CONFIG["LEVERAGE_ON_INTRADAY"]}x
+        * Risk_Percentage: {RISK_CONFIG["RISK_PERCENTAGE_FOR_SINGLE_TRADE"]}%
+        * Portfolio Margin: {portfolio_margin_status_str}
+        * All Positions: {all_positionss}
+
+        **Time Context:**
+        * Current Time: {datetime.now().strftime("%H:%M:%S")} IST
+        * Market Close Time: {AGENT_CONFIG["MARKET_CLOSE_TIME"]} IST
+
+        **Current Market Data (JSON):**
+        ```json
+        {market_data_str}
+
+        **Intraday Candles Data (JSON):**
+        ```json
+        {market_intraday_data_str}
+
+        **Technical Summary (JSON):**
+        ```json
+        {technical_summary}
+
+        **Previous Decisions:**
+        {previous_decision}
+
+        **Latest News (JSON):**
+        ```json
+        {stock_news}
+
+        **Existing Portfolio Positions(JSON):**
+        ```json
+        {portfolio_position_status_str}
         """
 
         user_question_prompt = """
-        Based on this data, analyze the current stock and portfolio while respecting leverage and exposure constraints. 
-        Determine the optimal next action (BUY, SELL, or HOLD) and provide your decision in JSON format.
+        ***
+        # TRADING DECISION GENERATION MANDATE
+
+        You are a quantitative trading analyst. Your task is to perform a rigorous analysis based on the provided documents (training PDF, chart plots), market data, and portfolio status, and then output a decision in the required JSON format.
+
+        ## 1. Position and Risk Assessment
+        * **Evaluate Existing Position:** Analyze the 'All Positions' and 'Previous Decisions' against the 'Current Market Data'. Determine if the existing position should be *maintained*, *closed for profit*, or *closed due to risk* (Stop Loss breached).
+        * **Constraint Check:** Based on 'Portfolio Margin' and 'Leverage on Intraday', assess the **maximum available capital** for a new trade. Ensure the final decision respects the 'Risk_Percentage' for a single trade.
+
+        ## 2. Technical and Fundamental Analysis
+        * **Technical Outlook:** Use the 'Technical Summary' and 'Chart Plots' to determine the short-term trend, key support, and resistance levels.
+        * **News Impact:** Analyze the 'Latest News' for potential fundamental catalysts that may override technical signals or increase volatility.
+
+        ## 3. Decision Formulation
+        * **Determine Action:** Based on the full analysis (Steps 1 & 2), select the optimal action: **BUY**, **SELL**, or **HOLD**.
+        * **Calculate Sizing and Price:** If BUY or SELL, calculate the **quantity** that respects the risk constraints. Determine the optimal **Stop Loss** and **Target Price** based on technical levels.
+
+        ## 4. Final Output Requirement
+        Provide your response strictly and exclusively in the specified **JSON format**. The **'reasoning' field MUST detail the analysis from Steps 1, 2, and 3.**
+        ***
         """
 
         logger.info("================Generating LLM decision======================")
@@ -108,7 +184,8 @@ class GeminiLLMClient:
                 types.Content(role="model", parts=[types.Part.from_text(text="I understand. I'll analyze the data and provide a trading decision in the specified JSON format.")]),
                 types.Content(role="user", parts=[
                     types.Part.from_text(text=user_question_prompt),
-                    image_parts
+                    self.training_pdf_part,
+                    *image_parts
                 ])
             ]
 
@@ -152,27 +229,71 @@ class GeminiLLMClient:
         Sends the current market and portfolio data to the LLM for an existing position.
         """
         user_data_prompt = f"""
-        Current trading scenario with existing position:
-        Instrument: {instrument_to_trade}
-        Existing Positions: {portfolio_position_status_str}
-        All Positions: {all_position}
-        Available Margin: {portfolio_margin_status_str}
-        Market Data: {market_data_str}
-        Intraday Candles: {market_intraday_data_str}
-        Technical Analysis: {technical_summary}
-        Relevant News: {stock_news}
-        Trading Context:
-        - Number of instruments to trade: {number_of_instruments_to_trade}
-        - Leverage: {AGENT_CONFIG["LEVERAGE_ON_INTRADAY"]}x
-        - Current Time: {datetime.now().strftime("%H:%M:%S")} IST
-        - Market Closes: {AGENT_CONFIG["MARKET_CLOSE_TIME"]} IST
-        - Decision Interval: {AGENT_CONFIG["DECISION_INTERVAL_SECONDS"]} seconds
-        - Risk per trade: {RISK_CONFIG["RISK_PERCENTAGE_FOR_SINGLE_TRADE"]}%
+        ### 📊 TRADING CONTEXT AND CONSTRAINTS
+        
+        * **Instrument to Analyze:** {instrument_to_trade}
+        * **Instrument Key:** {instrument_key}
+        * **Number of Intruments to Trade Today (Max):** {number_of_instruments_to_trade}
+        * **Leverage on Intraday:** {AGENT_CONFIG["LEVERAGE_ON_INTRADAY"]}x
+        * **Risk Percentage per Trade:** {RISK_CONFIG["RISK_PERCENTAGE_FOR_SINGLE_TRADE"]}%
+        
+        ---
+        ### ⏰ TIME CONTEXT
+        
+        * **Current Time (IST):** {datetime.now().strftime("%H:%M:%S")}
+        * **Market Close Time (IST):** {AGENT_CONFIG["MARKET_CLOSE_TIME"]}
+        * **Decision Interval (Seconds):** {AGENT_CONFIG["DECISION_INTERVAL_SECONDS"]}
+        
+        ---
+        ### 💰 PORTFOLIO & POSITION STATUS
+        
+        **Portfolio Margin Status(JSON):**
+        ```json
+        {portfolio_margin_status_str}
+
+        **Existing Portfolio Positions(JSON):**
+        ```json
+        {portfolio_position_status_str}
+
+        **All Positions(JSON):**
+        ```json
+        {all_position}
+
+        ---
+        ### 📈 MARKET & TECHNICAL DATA
+        ** Current Market Snapshot (JSON):**
+        ```json
+        {market_data_str}
+
+        ** Intraday Candles Data (JSON):**
+        ```json
+        {market_intraday_data_str}
+
+        **Technical Analysis Summary (JSON):**
+        ```json
+        {technical_summary}
+
+        **Latest Relevant News (JSON):**
+        ```json
+        {stock_news}
+        ---
+        ### 📜 HISTORY
+        **Previous Decisions Made:**
+        {previous_decision}
+        ---
         """
 
         user_question_prompt = """
-        Given the existing position and current market conditions, should we hold, add to, or exit the position?
-        Consider position sizing, risk management, and time until market close.
+        ### POSITION MANAGEMENT MANDATE
+        Perform a comprehensive analysis using the training PDF, chart plots, and current data:
+
+        1.  **Risk Check:** Is the current price challenging the Stop-Loss or Take-Profit?
+        2.  **Time Check:** Does the time to market close mandate an immediate closure?
+        3.  **Strategy Alignment:** Does the chart visually support the continuation (ADD/HOLD) or demand closure (EXIT) based on the principles in the Training PDF?
+
+        Based on this analysis, determine the single most optimal action: **BUY**, **SELL**, or **HOLD**. (Remember: BUY/SELL is used for closing *or* scaling in, depending on the current position's side.)
+
+        Provide your response strictly in the JSON format defined by the System Prompt.
         """
 
         image_parts =[]
@@ -187,15 +308,13 @@ class GeminiLLMClient:
         logger.info("================Generating LLM decision for existing position======================")
         
         try:
-            # FIX: 'system' role removed from history
             contents = [
                 types.Content(role="user", parts=[types.Part.from_text(text=user_data_prompt)]),
-                types.Content(role="model", parts=[types.Part.from_text(text="Acknowledgement: I have reviewed the context. Please provide previous decisions.")]),
-                types.Content(role="user", parts=[types.Part.from_text(text=f"- Previous decisions: {previous_decision}")]),
-                types.Content(role="model", parts=[types.Part.from_text(text="I will analyze P&L, exposure, and technicals to decide on position management.")]),
+                types.Content(role="model", parts=[types.Part.from_text(text="I acknowledge the existing position context, previous decisions, and all financial data. I will analyze P&L, exposure, technicals, and time constraints to generate a management decision in strict JSON format.")]),
                 types.Content(role="user", parts=[
                     types.Part.from_text(text=user_question_prompt),
-                    image_parts
+                    self.training_pdf_part,
+                    *image_parts
                 ])
             ]
 
@@ -233,6 +352,7 @@ class GeminiLLMClient:
         logger.info("================Generating LLM decision for instrument to trade======================")
 
         intro_prompt = f"""
+        Parse the training pdf,chart plots provided, current and prevoius position, current market data to evaluate the existing position.
         Carefully Analyze the technical summaries of multiple stocks provided below with chart Plots.
         Some key considerations:
             - Current Time: {datetime.now().strftime("%H:%M:%S")} IST
@@ -240,7 +360,7 @@ class GeminiLLMClient:
             - Number of Stocks to select: {AGENT_CONFIG["NUMBER_OF_STOCKS_TO_TRADE"]}
             - Technical Indicator Configuration : {INTRADAY_TECHNICAL_ANALYZER_CONFIG}
                 
-        Return your decision strictly in JSON format.
+        Provide your response strictly in JSON format.
         """
         
         try:
@@ -251,9 +371,10 @@ class GeminiLLMClient:
                 user_parts.append(types.Part.from_text(text=stock_text))
                 
                 img_part = self._load_image_part(technical_summary['chart_plot_image_path'])
+                logger.info(f"Attaching chart image for LLM: {technical_summary['chart_plot_image_path']}")
                 if img_part:
                     user_parts.append(img_part)
-
+            user_parts.append(self.training_pdf_part)
             # FIX: 'system' role removed from contents
             contents = [
                 types.Content(role="user", parts=user_parts)
@@ -286,7 +407,8 @@ class GeminiLLMClient:
         except Exception as e:
             logger.error(f"Error in stock selection: {e}")
             return None
-    def get_image_analysis_response(self, image_path: str, instruction: str = "Analyze this chart and describe key insights.") -> str | None:
+   
+    def get_image_analysis_response(self, image_path: str, instruction: str = "Analyze this chart and describe key insights. Learn From Trainig Youtube Video and PDF Provided.") -> str | None:
         """
         Sends an image to Gemini for analysis.
         """
@@ -299,6 +421,7 @@ class GeminiLLMClient:
 
             prompt_contents = [
                 types.Content(role="user", parts=[
+                    self.training_pdf_part,
                     types.Part.from_text(text=instruction),
                     image_part
                 ])
@@ -311,8 +434,12 @@ class GeminiLLMClient:
                 config=types.GenerateContentConfig(temperature=self.temperature)
             )
             logger.info(f"Response : {response}")
-            result_text = response.text.strip()
+            result_text = response.text
             logger.info(f"===== LLM Image Analysis Response =====\n{result_text}")
+            logger.info(f"===== LLM response.usage_metadata =====\n{response.usage_metadata}")
+            cost = self.calculate_cost(self.model_for_stock_qty_selection, response.usage_metadata)
+            logger.info(f"====Cost Breakdown====\n{json.dumps(cost)}")
+            self.create_json_file({"response": result_text})
             return result_text
 
         except Exception as e:
@@ -347,8 +474,6 @@ class GeminiLLMClient:
                 logger.info(f"====Cost Breakdown====\n{json.dumps(cost)}")
                 decision_json["cost_info"] = cost
 
-            # Save Request/Response for debugging
-            # Note: We convert binary parts to placeholders for JSON serialization
             serialized_request = []
             for c in contents:
                 parts = []
@@ -393,15 +518,19 @@ class GeminiLLMClient:
                     
             input_rate = pricing.get(model_base, {}).get("input", 0)
             output_rate = pricing.get(model_base, {}).get("output", 0)
-
             # Gemini SDK Usage fields
             prompt_tokens = usage.prompt_token_count
             completion_tokens = usage.candidates_token_count
-            # Check for cached tokens (available in some Gemini models)
-            cached_tokens = getattr(usage, "cached_content_token_count", 0)
+            thought_tokens = usage.thoughts_token_count if usage.thoughts_token_count else 0
+            cached_tokens = usage.cached_content_token_count if usage.cached_content_token_count else 0
 
             billable_prompt = max(float(prompt_tokens - cached_tokens), 0.0)
-            billable_completion = float(completion_tokens)
+            billable_completion = float(completion_tokens + thought_tokens)
+
+            logger.info(f"Usage for model {model}: {usage}")
+            logger.info(f"Prompt Tokens: {prompt_tokens}, Completion Tokens: {completion_tokens}, thought_tokens :{thought_tokens}")
+            logger.info(f"Cached Tokens: {cached_tokens}")
+            logger.info(f"Billable Prompt Tokens: {billable_prompt}, Billable Completion Tokens: {billable_completion}")
 
             # Cost computation
             cost_usd = (billable_prompt / 1000000.0) * input_rate + (billable_completion / 1000000.0) * output_rate
@@ -411,6 +540,7 @@ class GeminiLLMClient:
                 "model": model,
                 "prompt_tokens": prompt_tokens,
                 "cached_tokens": cached_tokens,
+                "thought_tokens": thought_tokens,
                 "completion_tokens": completion_tokens,
                 "cost_usd": cost_usd,
                 "cost_inr": cost_inr,
@@ -428,30 +558,48 @@ class GeminiLLMClient:
     
             with open(json_file_path, "w", encoding="utf-8") as json_file:
                 json.dump(body, json_file, ensure_ascii=False, indent=2)
-                # logger.info(f"JSON Prompt file created: {json_file_path}")
     
         except Exception as e:
             logger.error(f"Failed to create JSON Prompt file: {e}")
 
     def _generate_content_wrapper(self, model: str, contents: list, config: types.GenerateContentConfig):
         """
-        Wrapper to make the actual API call.
+        Wrapper to make the actual API call with a retry mechanism.
+        Retries up to 3 times on failure.
         """
-        try:
-            response = self.client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config
-            )
-            return response
-        except Exception as e:
-            logger.error(f"Gemini API Call Failed: {e}")
-            raise e
-# --- Usage Example ---
+        MAX_RETRIES = GEMINI_LLM_CONFIG.get('max_retries', 3)
+        for attempt in range(MAX_RETRIES):
+            try:
+                start_time = datetime.now()
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config
+                )
+                end_time = datetime.now()
+                duration = (end_time - start_time).total_seconds()
+                logger.info(f"*******Gemini API Call Duration: {duration} seconds (Attempt {attempt + 1})*******")
+                # If successful, return the response immediately
+                return response
+            
+            # We catch exceptions, as the SDK raises them on errors.
+            except Exception as e:
+                # Log the error for the current attempt
+                logger.warning(f"Gemini API Call Failed (Attempt {attempt + 1} of {MAX_RETRIES}): {e}")
+                
+                # If this was the last attempt, re-raise the exception
+                if attempt + 1 == MAX_RETRIES:
+                    logger.error(f"Gemini API Call failed after {MAX_RETRIES} attempts.")
+                    raise e
+                
+                wait_time = 2  # Simple fixed wait time in seconds
+                logger.info(f"Waiting for {wait_time} seconds before retrying...")
+                time.sleep(wait_time)
+
 if __name__ == "__main__":
     try:
         analyzer = GeminiLLMClient()
-        analyzer.get_image_analysis_response(image_path="charts/360ONE.NS_5m_3dD_chart.png")
+        analyzer.get_image_analysis_response(image_path="charts/RELIANCE_2025-12-07_21-01-00.png")
         print("Gemini Client Initialized Successfully")
     except Exception as e:
         print(f"Init failed: {e}")

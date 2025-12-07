@@ -28,7 +28,8 @@ GEMINI_LLM_CONFIG = {
     "model": os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
     "model_for_stock_qty_selection": os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
     "model_for_stock_selection": os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
-    "temperature": 1
+    "temperature": 1,
+    "max_retries": 3
 }
 
 # --- LLM Pricing ---
@@ -69,11 +70,11 @@ NSE_STOCKS =[
 # --- Agent Behavior ---
 AGENT_CONFIG = {
     "PRODUCT_TYPE": "I",              # <-- CRITICAL CHANGE: 'I' for Intraday
-    "DECISION_INTERVAL_SECONDS": 320,  # <-- CHANGE: Much faster decision loop
-    "MARKET_CLOSE_TIME": "14:55",      # <-- NEW: Time to square off all positions
+    "DECISION_INTERVAL_SECONDS": 100,  # <-- CHANGE: Much faster decision loop
+    "MARKET_CLOSE_TIME": "15:10",      # <-- NEW: Time to square off all positions
     "LEVERAGE_ON_INTRADAY" : 5,
     "AUTO_PICK_STOCK" : True,
-    "RANDOM_SELECT_STOCKS" : True, # True for random selection, False to select TOP STOCKS COMPARED WITH AVAILABLE MARGIN
+    "RANDOM_SELECT_STOCKS" : False, # True for random selection, False to select TOP STOCKS COMPARED WITH AVAILABLE MARGIN
     "SELECT_STOCK_COUNT_TO_COMPARE" : 10,
     "NUMBER_OF_STOCKS_TO_TRADE" : 1,
     "PREVIOUS_DECISIONS_TO_CONSIDER" : 5
@@ -87,6 +88,7 @@ INTRADAY_TECHNICAL_ANALYZER_CONFIG = {
 
 # -- Plot Config for Decision Making ---
 DECISION_CHART_PLOT_CONFIG = [
+    {"PERIOD" : "1d","INTERVAL" : "1m"},
     {"PERIOD" : "3d","INTERVAL" : "5m"},
     {"PERIOD" : "3d","INTERVAL" : "15m"}
 ]

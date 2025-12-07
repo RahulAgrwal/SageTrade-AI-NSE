@@ -138,6 +138,7 @@ class TradingAgent:
             number_of_instruments_to_trade = len(instruments_to_trade)
             for instrument_to_trade in instruments_to_trade:
                 logger.info(f"---------- Starting new decision cycle for {instrument_to_trade['trading_symbol']} ----------")
+                start_time = datetime.now()
                 trading_symbol = instrument_to_trade['trading_symbol']
                 instrument_key = instrument_to_trade['instrument_key']
                 stock_name = instrument_to_trade['name']
@@ -166,24 +167,12 @@ class TradingAgent:
                 # Decision from LLM
                 llm_json = None
                 if not position_present:
-                    llm_json = self.llm_client.generate_decision(instrument_key, instrument_to_trade, market_data, market_intraday_data, portfolio_margin, position ,technical_summary, stock_news,previous_decision_str,number_of_instruments_to_trade,chart_plot_image_paths,all_positionss, self.leverage_on_intraday)
+                    llm_json = self.llm_client.generate_decision_for_new_trade(instrument_key, instrument_to_trade, market_data, market_intraday_data, portfolio_margin, position ,technical_summary, stock_news,previous_decision_str,number_of_instruments_to_trade,chart_plot_image_paths,all_positionss, self.leverage_on_intraday)
                 else:
                     llm_json = self.llm_client.generate_decision_for_position_present(instrument_key, instrument_to_trade, market_data, market_intraday_data, portfolio_margin, position ,technical_summary, stock_news,previous_decision_str,number_of_instruments_to_trade,chart_plot_image_paths,all_positionss, self.leverage_on_intraday)
 
                 self.db.save_llm_decision(llm_json)
                 llm_decision = llm_json['response']
-                # llm_decision ={
-                #                   "thought": "Reasoning for the intraday action. Example: 'Price showing strong upward momentum with volume confirmation above VWAP and 9 EMA. Expecting continuation.'",
-                #                   "action": "BUY",
-                #                   "instrument_key": "NSE_EQ|INE002A01018",
-                #                   "confidence_score": 0.86,
-                #                   "quantity": 1,
-                #                   "order_type": "MARKET",
-                #                   "stop_loss": 952.5,
-                #                   "take_profit": 962.0,
-                #                   "current_price": 953.5
-                #                 }   
-                # llm_decision = None
                 if not llm_decision or 'action' not in llm_decision:
                     logger.error("Invalid or empty decision from LLM. Skipping cycle.")
                     pass # Restart timer for next cycle
@@ -198,7 +187,9 @@ class TradingAgent:
                     if current_price:
                          quantity = llm_decision.get('quantity', 0)
                          self.execute_trade(upstox_client, llm_decision, current_price, quantity)
-                logger.info(f"---------- Decision cycle completed for {trading_symbol} : {instrument_key} : {stock_name}----------")
+                end_time = datetime.now()
+                duration = (end_time - start_time).total_seconds()
+                logger.info(f"---------- Decision cycle completed for {trading_symbol} : {instrument_key} : {stock_name} in {duration} seconds----------")
                 number_of_instruments_to_trade-=1
                 time.sleep(5)
 
