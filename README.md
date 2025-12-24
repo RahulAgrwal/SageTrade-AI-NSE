@@ -1,6 +1,6 @@
 # 📈 Sage Trade AI NSE
 
-Automated, LLM-powered intraday stock trading agent for the NSE (National Stock Exchange of India).
+Automated, LLM-powered intraday stock trading agent for the NSE (National Stock Exchange of India) using Upstox Client SDK.
 
 ## 📖 Overview
 
@@ -78,7 +78,7 @@ Follow these steps to get the agent running in your local environment.
 
 ### 2. Installation
 ```bash
-git clone https://github.com/your-username/sage-trade-ai-nse.git
+git clone https://github.com/RahulAgrwal/SageTrade-AI-NSE.git
 cd sage-trade-ai-nse
 pip install -r requirements.txt
 ```
